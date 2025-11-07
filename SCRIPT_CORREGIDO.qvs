@@ -1,0 +1,379 @@
+SECTION Access;
+Permisos:
+LOAD
+    "ACCESS",
+    "USERID",
+    OMIT,
+    IDEMPRESA as idEmpresa,
+    CODVENDEDOR as CodVendedor,
+    TERRITORIO as CodZona
+FROM [lib://360Sense_Resources/360SensePermisos.xlsx]
+(ooxml, embedded labels, table is Ventas);
+
+Section Application;
+SET ThousandSep='.';
+
+Store Empresas into 'lib://360Sense_QVDs/empresasBHSLcab.qvd' (qvd);
+
+DimensionCiclicasVentas:
+LOAD * INLINE [
+    _DimensionVta
+    Territorio
+    Vendedor
+    GrupoCliente
+    ClientePadre
+    Cliente
+    ProductoPadre
+    Producto
+    Familia
+    Subfamilia
+    Fabricante
+];
+
+MedidasCiclicasVentas:
+LOAD * INLINE [
+    _Medida, _MedidaSel
+    'Unidades', 'unids'
+    'Venta €', 'euros'
+    '% Mrg Bruto', '%mrg'
+    'Margen Bruto', 'margen'
+    'CantidadPdte', 'pdteunids'
+    'ImportePendiente', 'pdteimporte'
+];
+
+ClientesPropiedades:
+LOAD
+    CodCliente,
+    PropiedadCliente
+FROM [lib://360Sense_QVDs/ClientesPropiedades.qvd]
+(qvd);
+
+ProductosPropiedades:
+LOAD
+    CodProducto,
+    PropiedadProducto
+FROM [lib://360Sense_QVDs/ProductosPropiedades.qvd]
+(qvd);
+
+tmp_config:
+LOAD *
+WHERE Hechos='ventas';
+LOAD
+    Hechos,
+    VerAños
+FROM [lib://360Sense_Resources/360config.xlsx]
+(ooxml, embedded labels, table is DatosCarga);
+
+Let vVerAños  = Alt(peek('VerAños', 0, 'tmp_config' ), 5);
+DROP TABLE tmp_config;
+
+FOR a = Year(Today())-$(vVerAños) TO Year(Today())
+  Ventas:
+  LOAD
+      NumDocumento,
+      NumLinea,
+      idEmpresa,
+      AutoNumberHash128('alm', 1, CodAlmacen)               as _idAlmacen,
+      AutoNumberHash128('clt', 1, CodCliente)               as _idCliente,
+      CodResponsable                                       as CodResponsableVenta,
+      AutoNumberHash128('prd', 1, CodProducto)              as _idProducto,
+      Lote,
+      TipoDocumento &' ## '& EstadoDocto                   as FiltroDocto,
+      TipoDocumento,
+      NatDocto,
+      Serie,
+      EstadoDocto,
+      CodEstadoDocto,
+      FechaDocto,
+      DocDueDate,
+      idFecha                                             as FechaSK,
+      AutoNumberHash128('exp', 1, CodClaseExpedicion)      as _idClaseExpedicion,
+      CodProyecto,
+      CodFormaPago,
+      AutoNumberHash128('pag', 1, CodCondicionesPago)      as _idCondicionPago,
+      AutoNumberHash128('agv', 1, CodAgenteVenta)          as _idVendedorVenta,
+      CodDirEnvio,
+      if(isnull(ExcluirDeFct) or trim(ExcluirDeFct) = '', 'N',
+          if(ExcluirDeFct='S' or ExcluirDeFct='s','Y',ExcluirDeFct)) as ExcluirDeFct,
+      ImpCobradoCC,
+      CantidadUnidades,
+      ImporteVenta,
+      ImporteCoste,
+      ImporteDtoTotal,
+      ImporteComision,
+      CantidadPdte,
+      ImportePendiente,
+      ImporteDtoTotal/(ImporteDtoTotal+ImporteVenta)       as PorcDto,
+      ImporteVenta-ImporteCoste                            as MargenBruto
+  FROM [lib://360Sense_QVDs/Ventas/Ventas*$(a).qvd]
+  (qvd)
+  WHERE EXISTS(idEmpresa)
+    AND idEmpresa<>3;
+NEXT
+
+TiposMovimiento:
+LOAD
+    idTipoMovimiento,
+    TipoMovimiento,
+    TipoES,
+    RegStock,
+    RegPMS,
+    SalidaRotacionFlag,
+    OrdenTM
+FROM [lib://360Sense_QVDs/Stocks/TiposMovimiento.qvd]
+(qvd);
+
+LOAD * INLINE [
+TipoMovimiento; TipoMovimientoESP
+A/P Credit Memo; Nota de crédito
+A/P Invoice; Factura
+A/R Credit Memo;
+A/R Invoice;
+Delivery; Entrega
+Goods Issue;
+Goods Receipt;
+Goods Return;
+Initial Quantity; Cantidad inicial
+Inventory Posting;
+Inventory Revaluation; Revaloración inventario
+Production Order; Orden de producción
+Returns; Devolución
+Stock Transfer; Traspaso
+];
+
+MapAnt:
+MAPPING LOAD * INLINE [
+    id, Rango
+    0, 'Menos 3 meses'
+    1, 'De 3 a 6 meses'
+    2, 'De 6m a 1 año'
+    3, 'De 1 a 2 años'
+    4, '>= 3 años'
+];
+
+StockCero:
+LOAD * INLINE [MostrarStockCero
+    Sí
+    No
+];
+
+TipoRotacion:
+LOAD * INLINE [TipoRotacion
+    Unidades
+    Euros
+];
+
+MovimientosProducto:
+LOAD
+    idTipoMovimiento,
+    idEmpresa,
+    NumMovimiento,
+    FechaSK,
+    Date(FechaStock, 'DD-MM-YYYY')                         as FechaStock,
+    Hora,
+    AutoNumberHash128('alm', 1, CodAlmacen)                as _idAlmacen,
+    AutoNumberHash128('prd', 1, CodProducto)               as _idProducto,
+    CantidadEntrada,
+    CantidadSalida,
+    CantidadInicio,
+    PrecioCoste,
+    Balance,
+    ValorMovimiento,
+    ImporteCoste,
+    Origen,
+    CantidadMov,
+    Cantidad,
+    StockFinal,
+    PMS,
+    ValorStock,
+    CantidadNeta,
+    SalidaRotacionUnids,
+    SalidaRotacionPMS,
+    NumeroStockMedioUnids,
+    NumeroStockMedioPMS,
+    OrdenStock,
+    EsUltDiaMes
+FROM [lib://360Sense_QVDs/Stocks/MovimientosProducto.qvd]
+(qvd)
+WHERE EXISTS(idEmpresa)
+  AND idEmpresa<>3;
+
+tabla_clientes_comercial:
+LOAD DISTINCT
+    CodResponsableVenta as [Objetivos.CodigoAgente],
+    _idCliente
+RESIDENT Ventas
+WHERE Len(Trim(CodResponsableVenta))>0;
+
+temp_objetivos:
+LOAD
+    idEmpresa,
+    Anio*10000 + Mes*100 + 1                                as FechaSK,
+    AutoNumberHash128('alm', 1, CodAlmacen)                 as _idAlmacen,
+    AutoNumberHash128('agv', 1, CodVendedor)                as _idVendedorVenta,
+    AutoNumberHash128('prd', 1, CodProducto)                as _idProducto,
+    CodVendedor                                             as CodVendedorVenta,
+    ImpPrevisto                                             as ImportePrevisto,
+    MgPrevisto,
+    "Margen €"
+FROM [lib://360Sense_QVDs/Objetivos.qvd]
+(qvd);
+
+LEFT JOIN (temp_objetivos)
+LOAD *
+RESIDENT tabla_clientes_comercial;
+
+CONCATENATE (Ventas)
+LOAD *
+RESIDENT temp_objetivos;
+
+DROP TABLES temp_objetivos, tabla_clientes_comercial;
+
+ClasesExpedicion:
+LOAD
+    AutoNumberHash128('exp', 1, CodClaseExpedicion)         as _idClaseExpedicion,
+    CodClaseExpedicion,
+    ClaseExpedicion
+FROM [lib://360Sense_QVDs/ClasesExpedicion.qvd]
+(qvd)
+WHERE idEmpresa=1;
+
+CondicionesPago:
+LOAD
+    AutoNumberHash128('pag', 1, CodCondicionPago)           as _idCondicionPago,
+    CodCondicionPago,
+    CondicionPago
+FROM [lib://360Sense_QVDs/CondicionesPago.qvd]
+(qvd)
+WHERE idEmpresa=1;
+
+VendedoresVenta:
+LOAD
+    AutoNumberHash128('agv', 1, CodVendedor)                as _idVendedorVenta,
+    CodVendedor                                             as CodVendedorVenta,
+    Vendedor                                                as VendedorVenta,
+    TipoVendedor                                            as TipoVendedorVenta
+FROM [lib://360Sense_QVDs/Vendedores.qvd]
+(qvd)
+WHERE idEmpresa=1;
+
+Link_Ventas_Stock:
+LOAD DISTINCT
+    idEmpresa,
+    _idAlmacen,
+    _idProducto,
+    AutoNumberHash128(idEmpresa & '|' & _idAlmacen & '|' & _idProducto) as KeyEmpresaAlmacenProducto
+RESIDENT MovimientosProducto;
+
+LEFT JOIN (MovimientosProducto)
+LOAD DISTINCT
+    idEmpresa,
+    _idAlmacen,
+    _idProducto,
+    KeyEmpresaAlmacenProducto
+RESIDENT Link_Ventas_Stock;
+
+DROP FIELDS idEmpresa, _idAlmacen, _idProducto FROM MovimientosProducto;
+
+LET TablaFechas='Ventas';
+$(Include=lib://360Sense_Resources/qCalendario.qvs);
+
+Fechas:
+LOAD
+    Max(FechaSK) as FchMax
+RESIDENT $(TablaFechas);
+
+LET vMaxDate = FieldValue('FchMax', 1);
+DROP TABLE Fechas;
+
+ListaAñoMes:
+LOAD  Date(FieldValue('AñoMes_Cal', RecNo()), 'YYYYMM') as Periodo
+AUTOGENERATE FieldValueCount('AñoMes_Cal');
+
+PeriodosTiempo:
+LOAD DISTINCT
+    'CU'                                     as TipoPeriodo_Id,
+    MesAño_Cal                               as MesAño_Cal,
+    MesAño_Cal                               as MesAño,
+    Año_Cal                                  as Año,
+    Mes_Cal                                  as Mes
+RESIDENT Calendario
+WHERE FechaSK <= $(vMaxDate);
+
+CONCATENATE (PeriodosTiempo)
+LOAD DISTINCT
+    'TAM'                                    as TipoPeriodo_Id,
+    AddMonths(MesAño_Cal, - IterNo()+1)      as MesAño_Cal,
+    MesAño_Cal                               as MesAño,
+    Año_Cal                                  as Año,
+    Mes_Cal                                  as Mes
+RESIDENT Calendario
+WHILE IterNo() <= 12
+  AND FechaSK <= $(vMaxDate);
+
+CONCATENATE (PeriodosTiempo)
+LOAD
+    'YTD'                                    as TipoPeriodo_Id,
+    MonthName(AddMonths(Periodo, 1 - IterNo())) as MesAño_Cal,
+    MonthName(Periodo)                       as MesAño,
+    Year(Periodo)                            as Año,
+    Month(Periodo)                           as Mes
+RESIDENT ListaAñoMes
+WHILE IterNo() <= Month(Periodo);
+
+CONCATENATE (PeriodosTiempo)
+LOAD
+    'LY'                                     as TipoPeriodo_Id,
+    MonthName(AddYears(Periodo, -1))         as MesAño_Cal,
+    MonthName(Periodo)                       as MesAño,
+    Year(Periodo)                            as Año,
+    Num(Month(Periodo))                      as Mes
+RESIDENT ListaAñoMes;
+
+CONCATENATE (PeriodosTiempo)
+LOAD
+    'YTD_LY'                                 as TipoPeriodo_Id,
+    MonthName(AddYears(AddMonths(Periodo, 1 - IterNo()), -1)) as MesAño_Cal,
+    MonthName(Periodo)                       as MesAño,
+    Year(Periodo)                            as Año,
+    Num(Month(Periodo))                      as Mes
+RESIDENT ListaAñoMes
+WHILE IterNo() <= Num(Month(Periodo));
+
+DROP TABLE ListaAñoMes;
+
+TiposPeriodo:
+LOAD * INLINE [
+    TipoPeriodo_Id, TipoPeriodo
+    'CU', 'Actual'
+    'TAM', 'TAM'
+    'YTD', 'Acumulado Año'
+    'LY', 'Año Anterior'
+    'YTD_LY', 'Acum. Año Anterior'
+];
+
+Variables:
+LOAD Name, Expression
+FROM [LIB://360Sense_Resources/Variables.xlsx]
+(ooxml, embedded labels, table is Ventas);
+
+FOR i = 0 TO NoOfRows('Variables') - 1
+    LET vName = Peek('Name', i, 'Variables');
+    LET $(vName) = Peek('Expression', i, 'Variables');
+NEXT i
+
+LET i = Null();
+LET vName = Null();
+DROP TABLE Variables;
+
+LET vIncluir_AlbPF='SI';
+LET vFlag_AlbPF='=IF(vIncluir_AlbPF=''SI'',1,0)';
+
+LET vIncluir_PedAB='NO';
+LET vFlag_PedAB='=IF(vIncluir_PedAB=''SI'',1,0)';
+
+LET TablaFechas=Null();
+LET a = Null();
+LET vVerAños = Null();
+
+Store Ventas into 'lib://360Sense_QVDs/VentaTPC.qvd' (qvd);
